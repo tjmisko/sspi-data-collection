@@ -6,6 +6,7 @@ from flask_wtf import FlaskForm
 from wtforms import StringField, PasswordField, SubmitField
 from wtforms.validators import InputRequired, Length, ValidationError
 from flask_bcrypt import Bcrypt
+import requests
 
 
 app = Flask(__name__)
@@ -74,6 +75,11 @@ def login():
 @login_required
 def dashboard():
     return render_template('dashboard.html')
+
+@app.route('/collect-population-worldbank')
+def collect_pop_worldbank():
+    response = requests.get("http://api.worldbank.org/v2/country/all/indicator/SP.POP.TOTL?format=json")
+    return str(response.json())
 
 @app.route('/logout', methods=['GET', 'POST'])
 @login_required
