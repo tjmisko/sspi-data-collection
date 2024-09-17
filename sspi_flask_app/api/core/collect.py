@@ -7,6 +7,7 @@ from ..datasource.worldbank import collectWorldBankdata
 from ..datasource.sdg import collectSDGIndicatorData
 from ..datasource.iea import collectIEAData
 from ..datasource.ilo import collectILOData
+from ..datasource.who import collectWHOdata
 from ..datasource.prisonstudies import collectPrisonStudiesData
 from datetime import datetime
 
@@ -73,7 +74,6 @@ def airpol():
     return Response(collect_iterator(Username=current_user.username), mimetype='text/event-stream')
 
 @collect_bp.route("/ALTNRG", methods=['GET'])
-@login_required
 def altnrg():
     def collect_iterator(**kwargs):
         yield from collectIEAData("TESbySource", "ALTNRG", **kwargs)
@@ -113,6 +113,14 @@ def lfpart():
     def collect_iterator(**kwargs):
         yield from collectILOData("DF_EAP_DWAP_SEX_AGE_RT", "LFPART", ".A...AGE_AGGREGATE_Y25-54", **kwargs)
     return Response(collect_iterator(Username=current_user.username), mimetype='text/event-stream')
+
+@collect_bp.route("/CHILDW")
+@login_required
+def childw():
+    def collect_iterator(**kwargs):
+        yield from collectSDGIndicatorData("4.1.1", "CHILDW", IntermediateCode = "YSCEDU", **kwargs)
+        yield from collectSDGIndicatorData("8.7.1", "CHILDW", IntermediateCode = "CHLDLB", **kwargs)
+    return Response(collect_iterator(Username = current_user.username), mimetype = 'text/event-stream')
 
 #################################
 ## Category: WORKER WELLBEING ##
@@ -173,6 +181,27 @@ def puptch():
 ##########################
 ## Category: HEALTHCARE ##
 ##########################
+@collect_bp.route("/ATBRTH", methods=['GET'])
+@login_required
+def atbrth():
+    def collect_iterator(**kwargs):
+        yield from collectWHOdata("MDG_0000000025", "ATBRTH", **kwargs)
+    return Response(collect_iterator(Username=current_user.username), mimetype='text/event-stream')
+
+@collect_bp.route("/DPTCOV", methods=['GET'])
+@login_required
+def dptcov():
+    def collect_iterator(**kwargs):
+        yield from collectWHOdata("vdpt", "DPTCOV", **kwargs)
+    return Response(collect_iterator(Username=current_user.username), mimetype='text/event-stream')
+
+@collect_bp.route("/PHYSPC", methods=['GET'])
+@login_required
+def physpc():
+    def collect_iterator(**kwargs):
+        yield from collectWHOdata("HWF_0001", "PHYSPC", **kwargs)
+    return Response(collect_iterator(Username=current_user.username), mimetype='text/event-stream')
+
 @collect_bp.route("/FAMPLN", methods=['GET'])
 @login_required
 def fampln():
@@ -183,6 +212,20 @@ def fampln():
 ##############################
 ## Category: INFRASTRUCTURE ##
 ##############################
+@collect_bp.route("/DRKWAT", methods=['GET'])
+@login_required
+def drkwat():
+    def collect_iterator(**kwargs):
+        yield from collectWorldBankdata("SH.H2O.SMDW.ZS", "DRKWAT", **kwargs)
+    return Response(collect_iterator(Username=current_user.username), mimetype='text/event-stream')
+
+@collect_bp.route("/SANSRV", methods=['GET'])
+@login_required
+def sansrv():
+    def collect_iterator(**kwargs):
+        yield from collectWorldBankdata("SH.STA.BASS.ZS", "SANSRV", **kwargs)
+    return Response(collect_iterator(Username=current_user.username), mimetype='text/event-stream')
+
 @collect_bp.route("/INTRNT", methods=['GET'])
 @login_required
 def intrnt():
@@ -194,9 +237,9 @@ def intrnt():
 #############################
 ## Category: PUBLIC SAFETY ##
 #############################
-@collect_bp.route("/INCARC", methods=['GET'])
+@collect_bp.route("/PRISON", methods=['GET'])
 @login_required
-def incarc():
+def prison():
     def collect_iterator(**kwargs):
         yield from collectPrisonStudiesData(**kwargs)
     return Response(collect_iterator(Username=current_user.username), mimetype='text/event-stream')

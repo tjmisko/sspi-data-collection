@@ -1,14 +1,17 @@
-import json
+import json, os
 import bs4 as bs
 from bs4 import BeautifulSoup
 from flask import Blueprint, redirect, url_for, jsonify
 from flask_login import login_required
 from ..resources.utilities import parse_json, goalpost, jsonify_df, zip_intermediates, format_m49_as_string, filter_incomplete_data, score_single_indicator
+from ..resources.utilities import parse_json, goalpost, jsonify_df, zip_intermediates, format_m49_as_string, filter_incomplete_data, score_single_indicator
 from ... import sspi_clean_api_data, sspi_raw_api_data, sspi_analysis
-from ..datasource.sdg import flatten_nested_dictionary_biodiv, extract_sdg_pivot_data_to_nested_dictionary, flatten_nested_dictionary_redlst, flatten_nested_dictionary_intrnt, flatten_nested_dictionary_watman, flatten_nested_dictionary_stkhlm
+from ..datasource.sdg import flatten_nested_dictionary_biodiv, extract_sdg_pivot_data_to_nested_dictionary, flatten_nested_dictionary_redlst, flatten_nested_dictionary_intrnt, flatten_nested_dictionary_watman, flatten_nested_dictionary_stkhlm, flatten_nested_dictionary_airpol, flatten_nested_dictionary_nrgint, flatten_nested_dictionary_fampln, flatten_nested_dictionary_drkwat, flatten_nested_dictionary_sansrv
 from ..datasource.worldbank import cleanedWorldBankData, cleaned_wb_current
 from ..datasource.oecdstat import organizeOECDdata, OECD_country_list, extractAllSeries, filterSeriesList, filterSeriesListSeniors
-from ..datasource.iea import filterSeriesListiea, cleanIEAData_altnrg
+from ..datasource.iea import filterSeriesListiea, cleanIEAData_altnrg, filter_IEA_cleaned
+from ..datasource.ilo import extractAllSeriesILO, filterSeriesListlfpart
+from ..datasource.who import cleanWHOdata
 import pandas as pd
 from pycountry import countries
 import csv
@@ -90,7 +93,6 @@ def compute_watman():
                            ScoreBy= "Score")
     clean_document_list, incomplete_observations = filter_incomplete_data(zipped_document_list)
     sspi_clean_api_data.insert_many(clean_document_list)
-    print(incomplete_observations)
     return parse_json(clean_document_list)
 
 @compute_bp.route("/STKHLM", methods=['GET'])
@@ -111,6 +113,20 @@ def compute_skthlm():
 ########################
 ### Category: ENERGY ###
 ########################
+
+@compute_bp.route("/NRGINT")
+@login_required
+def compute_nrgint():
+    if not sspi_raw_api_data.raw_data_available("NRGINT"):
+        return redirect(url_for("api_bp.collect_bp.NRGINT"))
+    raw_data = sspi_raw_api_data.fetch_raw_data("NRGINT")
+    intermediate_obs_dict = extract_sdg_pivot_data_to_nested_dictionary(raw_data)
+    computed = flatten_nested_dictionary_nrgint(intermediate_obs_dict)
+    scored_list = score_single_indicator(computed, "NRGINT")
+    clean_document_list, incomplete_observations = filter_incomplete_data(scored_list)
+    sspi_clean_api_data.insert_many(clean_document_list)
+    print(incomplete_observations)
+    return parse_json(clean_document_list)
 
 @compute_bp.route("/COALPW")
 @login_required
@@ -140,6 +156,7 @@ def compute_coalpw():
     }
 
     intermediate_data = pd.DataFrame(cleanIEAData_altnrg(raw_data, "COALPW"))
+
     intermediate_data.drop(intermediate_data[intermediate_data["CountryCode"].map(lambda s: len(s) != 3)].index, inplace=True)
     intermediate_data["IntermediateCode"] = intermediate_data["IntermediateCode"].map(lambda x: metadata_code_map[x])
     intermediate_data.astype({"Year": "int", "Value": "float"})
@@ -152,13 +169,27 @@ def compute_coalpw():
         json.loads(str(intermediate_list.to_json(orient="records")), parse_int=int, parse_float=float),
         "COALPW",
         ScoreFunction=lambda TLCOAL, TTLSUM: (TLCOAL)/(TTLSUM),
-        ScoreBy="Values"
+        ScoreBy= "Score"
     )
 
     clean_document_list, incomplete_observations = filter_incomplete_data(zipped_document_list)
     sspi_clean_api_data.insert_many(clean_document_list)
     print(incomplete_observations)
     return parse_json(clean_document_list)
+
+@compute_bp.route("/AIRPOL")
+@login_required
+def compute_airpol():
+    if not sspi_raw_api_data.raw_data_available("AIRPOL"):
+        return redirect(url_for("api_bp.collect_bp.AIRPOL"))
+    raw_data = sspi_raw_api_data.fetch_raw_data("AIRPOL")
+    intermediate_obs_dict = extract_sdg_pivot_data_to_nested_dictionary(raw_data)
+    flattened = flatten_nested_dictionary_airpol(intermediate_obs_dict)
+    scored_list = score_single_indicator(flattened, "AIRPOL")
+    cleaned, filtered = filter_incomplete_data(scored_list)
+    sspi_clean_api_data.insert_many(cleaned)
+    print(filtered)
+    return parse_json(cleaned)
 
 @compute_bp.route("/ALTNRG", methods=['GET'])
 @login_required
@@ -188,30 +219,40 @@ def compute_altnrg():
         "MTOTOIL": "FSLOIL"
     }
 
-    intermediate_data = pd.DataFrame(cleanIEAData_altnrg(raw_data, "ALTNRG"))
-    intermediate_data.drop(intermediate_data[intermediate_data["CountryCode"].map(lambda s: len(s) != 3)].index, inplace=True)
-    intermediate_data["IntermediateCode"] = intermediate_data["IntermediateCode"].map(lambda x: metadata_code_map[x])
-    intermediate_data.astype({"Year": "int", "Value": "float"})
-    # adding sum of available intermediates as an intermediate, in order to complete data
-    sums = intermediate_data.groupby(['Year', 'CountryCode']).agg({'Value': 'sum'}).reset_index()
-    sums['IntermediateCode'], sums['Unit'], sums['IndicatorCode'] = 'TTLSUM', 'TJ', 'ALTNRG'
+    intermediate_data = cleanIEAData_altnrg(raw_data, "ALTNRG", metadata_code_map)
+    codes = ["NCLEAR", "HYDROP", "GEOPWR", "BIOWAS"]
+    filtered_inter = filter_IEA_cleaned(intermediate_data, codes)
+    organized = {}
+    for code in codes:
+        inter_list = []
+        for entry in filtered_inter:
+            if entry["IntermediateCode"] == code:
+                inter_list.append(entry)
+        organized[code] = inter_list
+    return parse_json(organized)
+    # intermediate_data.drop(intermediate_data[intermediate_data["CountryCode"].map(lambda s: len(s) != 3)].index, inplace=True)
+    # intermediate_data["IntermediateCode"] = intermediate_data["IntermediateCode"].map(lambda x: metadata_code_map[x])
+    # intermediate_data.astype({"Year": "int", "Value": "float"})
+    # # adding sum of available intermediates as an intermediate, in order to complete data
+    # sums = intermediate_data.groupby(['Year', 'CountryCode']).agg({'Value': 'sum'}).reset_index()
+    # sums['IntermediateCode'], sums['Unit'], sums['IndicatorCode'] = 'TTLSUM', 'TJ', 'ALTNRG'
 
-    # running the samce operations for alternative energy sources
-    inter_sums = intermediate_data[intermediate_data["IntermediateCode"].isin(["HYDROP", "NCLEAR", "GEOPWR", "BIOWAS"])]
-    alt_sums = inter_sums.groupby(['Year', 'CountryCode']).agg({'Value': 'sum'}).reset_index()
-    alt_sums['IntermediateCode'], alt_sums['Unit'], alt_sums['IndicatorCode'] = 'ALTSUM', 'TJ', 'ALTNRG'
+    # # running the samce operations for alternative energy sources
+    # inter_sums = intermediate_data[intermediate_data["IntermediateCode"].isin(["HYDROP", "NCLEAR", "GEOPWR", "BIOWAS"])]
+    # alt_sums = inter_sums.groupby(['Year', 'CountryCode']).agg({'Value': 'sum'}).reset_index()
+    # alt_sums['IntermediateCode'], alt_sums['Unit'], alt_sums['IndicatorCode'] = 'ALTSUM', 'TJ', 'ALTNRG'
 
-    intermediate_list = pd.concat([pd.concat([intermediate_data, sums]), alt_sums])
-    zipped_document_list = zip_intermediates(
-        json.loads(str(intermediate_list.to_json(orient="records")), parse_int=int, parse_float=float),
-        "ALTNRG",
-        ScoreFunction=lambda TTLSUM, ALTSUM, BIOWAS: (ALTSUM - 0.5 * BIOWAS)/(TTLSUM),
-        ScoreBy="Values"
-    )
-    clean_document_list, incomplete_observations = filter_incomplete_data(zipped_document_list)
-    print(incomplete_observations)
-    sspi_clean_api_data.insert_many(clean_document_list)
-    return parse_json(clean_document_list)
+    # intermediate_list = pd.concat([pd.concat([intermediate_data, sums]), alt_sums])
+    # zipped_document_list = zip_intermediates(
+    #     json.loads(str(intermediate_list.to_json(orient="records")), parse_int=int, parse_float=float),
+    #     "ALTNRG",
+    #     ScoreFunction=lambda TTLSUM, ALTSUM, BIOWAS: (ALTSUM - 0.5 * BIOWAS)/(TTLSUM),
+    #     ScoreBy= "Score"
+    # )
+    # clean_document_list, incomplete_observations = filter_incomplete_data(zipped_document_list)
+    # print(incomplete_observations)
+    # sspi_clean_api_data.insert_many(clean_document_list)
+    # return parse_json(clean_document_list)
 
 ##################################
 ### Category: GREENHOUSE GASES ###
@@ -225,49 +266,68 @@ def compute_gtrans():
     
     #######    WORLDBANK compute    #########
     worldbank_raw = sspi_raw_api_data.fetch_raw_data("GTRANS", IntermediateCode="FUELPR")
-    worldbank_clean_list = cleanedWorldBankData(worldbank_raw, "GTRANS")
+    print(worldbank_raw)
+    worldbank_clean_list = cleaned_wb_current(worldbank_raw, "GTRANS", "USD per liter")
 
     #######  IEA compute ######
     iea_raw_data = sspi_raw_api_data.fetch_raw_data("GTRANS", IntermediateCode="TCO2EQ")
+    print(iea_raw_data)
     series = extractAllSeries(iea_raw_data[0]["Raw"])
-    keys = iea_raw_data[0].keys()
-    raw = iea_raw_data[0]["Raw"]
-    metadata = iea_raw_data[0]["Metadata"]
-    metadata_soup = bs.BeautifulSoup(metadata, "lxml")
-    raw_soup = bs.BeautifulSoup(raw, "lxml")
+
+    ### Helpful for debugging xml parsing
+    # keys = iea_raw_data[0].keys()
+    # raw = iea_raw_data[0]["Raw"]
+    # metadata = iea_raw_data[0]["Metadata"]
+    # metadata_soup = bs.BeautifulSoup(metadata, "lxml")
+    # raw_soup = bs.BeautifulSoup(raw, "lxml")
     metadata_codes = {
         "ENER_TRANS": "1A3 - Transport"
     }
     metadata_code_map = {
-        "ENER_TRANS": "TCO2EQ"
+        "ENER_TRANS": "TCO2EM"
     }
     document_list = []
 
     for code in metadata_codes.keys():
         document_list.extend(filterSeriesListiea(series, code, "GTRANS"))
     long_iea_data = pd.DataFrame(document_list)
-    pop_data = pd.read_csv("local/UN_population_data.csv").astype(str)
-    # ### combining in pandas for UN population data to conpute correct G####
-    wb_df = pd.DataFrame(worldbank_clean_list)
-    wb_df = wb_df[wb_df["RAW"].notna()].astype(str)
+    print(long_iea_data.head())
+    long_iea_data.drop(long_iea_data[long_iea_data["CountryCode"].map(lambda s: len(s) != 3)].index, inplace=True)
+    long_iea_data["IntermediateCode"] = long_iea_data["VariableCodeIEA"].map(lambda x: metadata_code_map[x])
+    long_iea_data = long_iea_data.astype({"Year": "int32", "Value": "float64"}).drop(columns=["Pollutant",  "IndicatorCode", "VariableCodeIEA", "Source"])
 
-    wb_df = wb_df.merge(pop_data, how="left", left_on = ["YEAR","CountryName"], right_on = ["year","country"])
-    test = wb_df[wb_df["pop"] == "na"]
+    pop = json.load(open(os.path.join("local", "population.json")))
+    pop_data = pd.DataFrame(pop).astype({"Year":"int32", "Population":"float64"})
+
+    long_iea_data = long_iea_data.merge(pop_data, how="left", on = ["Year", "CountryCode"]).dropna()
+    long_iea_data['Value'] = long_iea_data['Value']/long_iea_data['Population']
+    long_iea_data = long_iea_data.drop(columns=["Population", "Country"])
+
+
+    # ### combining in pandas for UN population data to conpute correct G####
+    wb_df = pd.DataFrame(worldbank_clean_list).astype({"Year": "int32", "Value": "float64"}).drop(columns=["Description", "IndicatorCode"])
     
-    iea_df = long_iea_data[['Year', 'CountryCode']]
-    iea_df = iea_df[iea_df["Value"].notna()].astype(str)
     
-    merged = wb_df.merge(iea_df, how="outer", left_on=["CountryCode", "YEAR"], right_on=["CountryCode","Year"]) 
-    # merged['RAW'] = (merged['RAW_x'].astype(float) + merged['RAW_y'].astype(float))/2
-    # df = merged.dropna()[['IndicatorCode', 'CountryCode', 'YEAR', 'RAW']]
-    # document_list = json.loads(str(df.to_json('records')))
-    # count = sspi_clean_api_data.insert_many(document_list)
-    # return f"Inserted {count} documents into SSPI Clean Database from OECD"
-    #print(series)
-    #print(len(document_list))
-    #return jsonify(document_list)
-    final_data = zip_intermediates(long_iea_data)
-    return jsonify(document_list)
+    merged = pd.concat([wb_df, long_iea_data]).dropna()
+    
+
+    zipped_document_list = zip_intermediates(
+        json.loads(str(merged.to_json(orient="records")), parse_int=int, parse_float=float),
+        "GTRANS",
+        ScoreFunction=lambda FUELPR, TCO2EM: 0.5*FUELPR + 0.5*TCO2EM,
+        ScoreBy="Score"
+    )
+    clean_document_list = filter_incomplete_data(zipped_document_list)[0]
+    sspi_clean_api_data.insert_many(clean_document_list)
+    return parse_json(clean_document_list)
+    
+    
+    
+
+###############################################
+# Compute Routes for Pillar: MARKET STRUCTURE #
+###############################################
+
 
 @compute_bp.route("/SENIOR", methods=['GET'])
 @login_required
@@ -308,6 +368,108 @@ def compute_senior():
     print(incomplete_observations)
     return parse_json(clean_document_list)
 
+#################################
+## Category: WORKER ENGAGEMENT ##
+#################################
+
+@compute_bp.route("/LFPART", methods=['GET'])
+@login_required
+def compute_lfpart():
+    if not sspi_raw_api_data.fetch_raw_data("LFPART"):
+        return redirect(url_for("collect_bp.LFPART"))
+    raw_data = sspi_raw_api_data.fetch_raw_data("LFPART")
+    series_list = extractAllSeriesILO(raw_data[0]["Raw"])
+    document_list = filterSeriesListlfpart(series_list)
+    long_lfpart_data = pd.DataFrame(document_list)
+    long_lfpart_data.drop(long_lfpart_data[long_lfpart_data["CountryCode"].map(lambda s: len(s) != 3)].index, inplace=True)
+    long_lfpart_data.astype({"Year": "int", "Value": "float"})
+    scored_document_list = score_single_indicator(json.loads(str(long_lfpart_data.to_json(orient="records")), parse_int=int, parse_float=float), 
+                                                  IndicatorCode="LFPART")
+    clean_document_list, incomplete_observations = filter_incomplete_data(scored_document_list)
+    sspi_clean_api_data.insert_many(clean_document_list)
+    print(incomplete_observations)
+    return parse_json(clean_document_list)
+    # print(raw_data_soup.find_all('generic:series'))
+    # return None
+
+@compute_bp.route("/FDEPTH", methods=['GET'])
+# @login_required
+def compute_fdepth():
+    if not sspi_raw_api_data.raw_data_available("FDEPTH"):
+        return redirect(url_for("collect_bp.FDEPTH"))
+    credit_raw = sspi_raw_api_data.fetch_raw_data("FDEPTH", IntermediateCode = "CREDIT")
+    credit_clean = cleaned_wb_current(credit_raw, "FDEPTH", unit = "Percent")
+    deposit_raw = sspi_raw_api_data.fetch_raw_data("FDEPTH", IntermediateCode = "DPOSIT")
+    deposit_clean = cleaned_wb_current(deposit_raw, "FDEPTH", unit = "Percent")
+    combined_list = credit_clean + deposit_clean
+    cleaned_list = zip_intermediates(combined_list, "FDEPTH",
+                                     ScoreFunction= lambda CREDIT, DPOSIT: 0.5 * CREDIT + 0.5 * DPOSIT,
+                                     ScoreBy= "Score")
+    filtered_list, incomplete_data = filter_incomplete_data(cleaned_list)
+    sspi_clean_api_data.insert_many(filtered_list)
+    print(incomplete_data)
+    return parse_json(filtered_list)
+
+
+###########################################
+# Compute Routes for Pillar: PUBLIC GOODS #
+###########################################
+@compute_bp.route("/ATBRTH")
+@login_required
+def compute_atbrth():
+    if not sspi_raw_api_data.raw_data_available("ATBRTH"):
+        return redirect(url_for("api_bp.collect_bp.ATBRTH"))
+    raw_data = sspi_raw_api_data.fetch_raw_data("ATBRTH")
+    cleaned = cleanWHOdata(raw_data, "ATBRTH", "Percent",
+                           "The proportion of births attended by trained and/or skilled health personnel")
+    scored = score_single_indicator(cleaned, "ATBRTH")
+    filtered_list, incomplete_data = filter_incomplete_data(scored)
+    sspi_clean_api_data.insert_many(filtered_list)
+    print(incomplete_data)
+    return parse_json(filtered_list)
+
+@compute_bp.route("/DPTCOV")
+@login_required
+def compute_dptcov():
+    if not sspi_raw_api_data.raw_data_available("DPTCOV"):
+        return redirect(url_for("api_bp.collect_bp.DPTCOV"))
+    raw_data = sspi_raw_api_data.fetch_raw_data("DPTCOV")
+    cleaned = cleanWHOdata(raw_data, "DPTCOV", "Percent",
+                           "DTP3 immunization coverage among one-year-olds (%)")
+    scored = score_single_indicator(cleaned, "DPTCOV")
+    filtered_list, incomplete_data = filter_incomplete_data(scored)
+    # sspi_clean_api_data.insert_many(filtered_list)
+    # print(incomplete_data)
+    return parse_json(filtered_list)
+
+@compute_bp.route("/PHYSPC")
+@login_required
+def compute_physpc():
+    if not sspi_raw_api_data.raw_data_available("PHYSPC"):
+        return redirect(url_for("api_bp.collect_bp.PHYSPC"))
+    raw_data = sspi_raw_api_data.fetch_raw_data("PHYSPC")
+    cleaned = cleanWHOdata(raw_data, "PHYSPC", "Doctors/10000",
+                           "Number of medical doctors (physicians), both generalists and specialists, expressed per 10,000 people.")
+    scored = score_single_indicator(cleaned, "PHYSPC")
+    filtered_list, incomplete_data = filter_incomplete_data(scored)
+    # sspi_clean_api_data.insert_many(filtered_list)
+    # print(incomplete_data)
+    return parse_json(filtered_list)
+
+
+@compute_bp.route("/FAMPLN")
+@login_required
+def compute_fampln():
+    if not sspi_raw_api_data.raw_data_available("FAMPLN"):
+        return redirect(url_for("api_bp.collect_bp.FAMPLN"))
+    raw_data = sspi_raw_api_data.fetch_raw_data("FAMPLN")
+    inter = extract_sdg_pivot_data_to_nested_dictionary(raw_data)
+    final = flatten_nested_dictionary_fampln(inter)
+    computed_list = score_single_indicator(final, "FAMPLN")
+    filtered_list, incomplete_data = filter_incomplete_data(computed_list)
+    sspi_clean_api_data.insert_many(filtered_list)
+    print(len(incomplete_data))
+    return parse_json(filtered_list)
 
 @compute_bp.route("/PRISON", methods=['GET'])
 @login_required
@@ -318,6 +480,32 @@ def compute_prison():
                                                                                                "summary": "Prison population rate"})
     print(table)
     return "string"
+
+@compute_bp.route("/DRKWAT")
+@login_required
+def compute_drkwat():
+    if not sspi_raw_api_data.raw_data_available("DRKWAT"):
+        return redirect(url_for("api_bp.collect_bp.DRKWAT"))
+    raw_data = sspi_raw_api_data.fetch_raw_data("DRKWAT")
+    cleaned = cleaned_wb_current(raw_data, "DRKWAT", "Percent")
+    scored = score_single_indicator(cleaned, "DRKWAT")
+    filtered_list, incomplete_observations = filter_incomplete_data(scored)
+    sspi_clean_api_data.insert_many(filtered_list)
+    print(incomplete_observations)
+    return parse_json(filtered_list)
+
+@compute_bp.route("/SANSRV")
+@login_required
+def compute_sansrv():
+    if not sspi_raw_api_data.raw_data_available("SANSRV"):
+        return redirect(url_for("api_bp.collect_bp.SANSRV"))
+    raw_data = sspi_raw_api_data.fetch_raw_data("SANSRV")
+    cleaned = cleaned_wb_current(raw_data, "SANSRV", "Percent")
+    scored = score_single_indicator(cleaned, "SANSRV")
+    filtered_list, incomplete_observations = filter_incomplete_data(scored)
+    sspi_clean_api_data.insert_many(filtered_list)
+    print(incomplete_observations)
+    return parse_json(filtered_list)
 
 @compute_bp.route("/INTRNT", methods=['GET'])
 # @login_required
@@ -339,22 +527,3 @@ def compute_intrnt():
     sspi_clean_api_data.insert_many(filtered_list)
     print(incomplete_observations)
     return parse_json(filtered_list)
-
-@compute_bp.route("/FDEPTH", methods=['GET'])
-# @login_required
-def compute_fdepth():
-    if not sspi_raw_api_data.raw_data_available("FDEPTH"):
-        return redirect(url_for("collect_bp.FDEPTH"))
-    credit_raw = sspi_raw_api_data.fetch_raw_data("FDEPTH", IntermediateCode = "CREDIT")
-    credit_clean = cleaned_wb_current(credit_raw, "FDEPTH", unit = "Percent")
-    deposit_raw = sspi_raw_api_data.fetch_raw_data("FDEPTH", IntermediateCode = "DPOSIT")
-    deposit_clean = cleaned_wb_current(deposit_raw, "FDEPTH", unit = "Percent")
-    combined_list = credit_clean + deposit_clean
-    cleaned_list = zip_intermediates(combined_list, "FDEPTH",
-                                     ScoreFunction= lambda CREDIT, DPOSIT: 0.5 * CREDIT + 0.5 * DPOSIT,
-                                     ScoreBy= "Score")
-    filtered_list, incomplete_data = filter_incomplete_data(cleaned_list)
-    sspi_clean_api_data.insert_many(filtered_list)
-    print(incomplete_data)
-    return parse_json(filtered_list)
-

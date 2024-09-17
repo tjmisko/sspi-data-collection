@@ -61,6 +61,8 @@ def flatten_nested_dictionary_biodiv(intermediate_obs_dict):
                                        "ER_PTD_TERR": ["TERRST", "Percent", "Percentage of important sites covered by protected areas, terrestrial"],
                                        "ER_PTD_FRHWTR": ["FRSHWT", "Percent", "Percentage of important sites covered by protected areas, freshwater"]
                                        }
+                if intermediate_obs_dict[cou][year][intermediate] == "N":
+                    continue
                 observation = {
                     "CountryCode": cou,
                     "IndicatorCode": "BIODIV",
@@ -78,6 +80,8 @@ def flatten_nested_dictionary_redlst(intermediate_obs_dict):
     for country in intermediate_obs_dict:
         for year in intermediate_obs_dict[country]:
             value = [x for x in intermediate_obs_dict[country][year].values()][0]
+            if value == "N":
+                continue
             new_observation = {
                 "CountryCode": country,
                 "IndicatorCode": "REDLST",
@@ -94,6 +98,8 @@ def flatten_nested_dictionary_intrnt(intermediate_obs_dict):
     for country in intermediate_obs_dict:
         for year in intermediate_obs_dict[country]:
             value = [x for x in intermediate_obs_dict[country][year].values()][0]
+            if value == "N":
+                continue
             new_observation = {
                 "CountryCode": country,
                 "IndicatorCode": "INTRNT",
@@ -116,6 +122,8 @@ def flatten_nested_dictionary_watman(intermediate_obs_dict):
                 inter_value = string_to_float(intermediate_obs_dict[country][year][intermediate])
                 log_scaled_value = (lambda intermediate: math.log(inter_value) if intermediate == "ER_H2O_WUEYST" 
                               and isinstance(inter_value, float) else inter_value)
+                if inter_value == "NaN":
+                    continue
                 observation = {
                     "CountryCode": country,
                     "IndicatorCode": "WATMAN",
@@ -128,16 +136,139 @@ def flatten_nested_dictionary_watman(intermediate_obs_dict):
                 final_data_list.append(observation)
     return final_data_list
 
-def flatten_nested_dictionary_stkhlm(intermediate_obs_dict):
+def find_intermediate_watman(inter):
+    if inter == "ER_H2O_WUEYST":
+        return "CWUEFF"
+    if inter == "ER_H2O_STRESS":
+        return "WTSTRS"
+
+def find_unit_watman(inter):
+    if inter == "ER_H2O_WUEYST":
+        return "United States dollars per cubic meter"
+    if inter == "ER_H2O_STRESS":
+        return "Freshwater withdrawal as a proportion of available freshwater resources"
+
+def flatten_nested_dictionary_airpol(intermediate_obs_dict):
     final_data_lst = []
     for country in intermediate_obs_dict:
         for year in intermediate_obs_dict[country]:
             value = [x for x in intermediate_obs_dict[country][year].values()][0]
             new_observation = {
                 "CountryCode": country,
+                "IntermediateCode": "AIRPOL",
+                "Year": int(year),
+                "Value": string_to_float(value),
+                "Unit": "mgr/m^3"
+            }
+            final_data_lst.append(new_observation)
+    return final_data_lst
+
+def flatten_nested_dictionary_stkhlm(intermediate_obs_dict):
+    final_data_lst = []
+    for country in intermediate_obs_dict:
+        for year in intermediate_obs_dict[country]:
+            value = [x for x in intermediate_obs_dict[country][year].values()][0]
+            if value == "N":
+                continue
+            new_observation = {
+                "CountryCode": country,
                 "IndicatorCode": "STKHLM",
                 "Unit": "Percent",
                 "Description": "Parties meeting their commitments and obligations in transmitting information as required by Stockholm Convention on hazardous waste, and other chemicals (%)",
+                "Year": year,
+                "Value": string_to_float(value),
+            }
+            final_data_lst.append(new_observation)
+    return final_data_lst
+
+def flatten_nested_dictionary_airpol(intermediate_obs_dict):
+    final_data_lst = []
+    for country in intermediate_obs_dict:
+        for year in intermediate_obs_dict[country]:
+            value = [x for x in intermediate_obs_dict[country][year].values()][0]
+            if value == "NaN":
+                continue
+            new_observation = {
+                "CountryCode": country,
+                "IndicatorCode": "AIRPOL",
+                "Year": int(year),
+                "Value": string_to_float(value),
+                "Description": "Annual mean levels of fine particulate matter (PM2.5 and PM10) in cities (population weighted) measured in micrograms per cubic meter of air",
+                "Unit": "μg/m^3"
+            }
+            final_data_lst.append(new_observation)
+    return final_data_lst
+
+def flatten_nested_dictionary_nrgint(intermediate_obs_dict):
+    final_data_lst = []
+    for country in intermediate_obs_dict:
+        for year in intermediate_obs_dict[country]:
+            value = [x for x in intermediate_obs_dict[country][year].values()][0]
+            if value == "NaN":
+                continue
+            new_observation = {
+                "CountryCode": country,
+                "IndicatorCode": "NRGINT",
+                "Unit": "MJ_PER_GDP_CON_PPP_USD",
+                "Description": "Energy intensity level of primary energy (megajoules per constant 2017 purchasing power parity GDP)",
+                "Year": year,
+                "Value": string_to_float(value),
+            }
+            final_data_lst.append(new_observation)
+    return final_data_lst
+
+def flatten_nested_dictionary_fampln(intermediate_obs_dict):
+    final_data_lst = []
+    for country in intermediate_obs_dict:
+        for year in intermediate_obs_dict[country]:
+            value = [x for x in intermediate_obs_dict[country][year].values()][0]
+            if value == "NaN":
+                continue
+            new_observation = {
+                "CountryCode": country,
+                "IndicatorCode": "FAMPLN",
+                "Unit": "Percent",
+                "Description": "Proportion of women of reproductive age (aged 15-49 years) who have their need for family planning satisfied with modern methods",
+                "Year": year,
+                "Value": 100 - string_to_float(value),
+            }
+            final_data_lst.append(new_observation)
+    return final_data_lst
+
+def flatten_nested_dictionary_drkwat(intermediate_obs_dict):
+    final_data_lst = []
+    for country in intermediate_obs_dict:
+        for year in intermediate_obs_dict[country]:
+            value = [x for x in intermediate_obs_dict[country][year].values()][0]
+            if value == "NaN":
+                continue
+            new_observation = {
+                "CountryCode": country,
+                "IndicatorCode": "DRKWAT",
+                "Unit": "Percent",
+                "Description": "Percentage of population using safely managed drinking water services",
+                "Year": year,
+                "Value": string_to_float(value),
+            }
+            final_data_lst.append(new_observation)
+    return final_data_lst
+
+def flatten_nested_dictionary_sansrv(intermediate_obs_dict):
+    intermediates = {"SH_SAN_HNDWSH": "Proportion of population with basic handwashing facilities on premises, by urban/rural (%)",
+                     "SH_SAN_SAFE": "Proportion of population using safely managed sanitation services, by urban/rural (%)"}
+    final_data_lst = []
+    for country in intermediate_obs_dict:
+        for year in intermediate_obs_dict[country]:
+            if "SH_SAN_SAFE" not in intermediate_obs_dict[country][year].keys():
+                continue
+            value = intermediate_obs_dict[country][year]["SH_SAN_SAFE"]
+            if value == "NaN":
+                continue
+            new_observation = {
+                "CountryCode": country,
+                "IndicatorCode": "SANSRV",
+                "Unit": "Percent",
+                "Description": "Proportion of population using safely managed sanitation services, by urban/rural (%)",
                 "Year": year,
                 "Value": string_to_float(value),
             }
