@@ -1,11 +1,12 @@
-import json
+import json, os
 import bs4 as bs
 from bs4 import BeautifulSoup
 from flask import Blueprint, redirect, url_for, jsonify
 from flask_login import login_required
 from ..resources.utilities import parse_json, goalpost, jsonify_df, zip_intermediates, format_m49_as_string, filter_incomplete_data, score_single_indicator
+from ..resources.utilities import parse_json, goalpost, jsonify_df, zip_intermediates, format_m49_as_string, filter_incomplete_data, score_single_indicator
 from ... import sspi_clean_api_data, sspi_raw_api_data, sspi_analysis
-from ..datasource.sdg import flatten_nested_dictionary_biodiv, extract_sdg_pivot_data_to_nested_dictionary, flatten_nested_dictionary_redlst, flatten_nested_dictionary_intrnt, flatten_nested_dictionary_watman, flatten_nested_dictionary_stkhlm
+from ..datasource.sdg import flatten_nested_dictionary_biodiv, extract_sdg_pivot_data_to_nested_dictionary, flatten_nested_dictionary_redlst, flatten_nested_dictionary_intrnt, flatten_nested_dictionary_watman, flatten_nested_dictionary_stkhlm, flatten_nested_dictionary_airpol, flatten_nested_dictionary_nrgint
 from ..datasource.worldbank import cleanedWorldBankData, cleaned_wb_current
 from ..datasource.oecdstat import organizeOECDdata, OECD_country_list, extractAllSeries, filterSeriesList, filterSeriesListSeniors
 from ..datasource.iea import filterSeriesListiea, cleanIEAData_altnrg
@@ -112,6 +113,25 @@ def compute_skthlm():
 ### Category: ENERGY ###
 ########################
 
+@compute_bp.route("/NRGINT", methods=['GET'])
+@login_required
+def compute_nrgint():
+    if not sspi_raw_api_data.raw_data_available("NRGINT"):
+        return redirect(url_for("collect_bp.NRGINT"))
+    raw_data = sspi_raw_api_data.fetch_raw_data("NRGINT")
+    raw_data = sspi_raw_api_data.fetch_raw_data("NRGINT")
+    intermediate_obs_dict = extract_sdg_pivot_data_to_nested_dictionary(raw_data)
+    long_nrgint = pd.DataFrame(flatten_nested_dictionary_nrgint(intermediate_obs_dict))
+    zipped_document_list = zip_intermediates(
+        json.loads(str(long_nrgint.to_json(orient="records")), parse_int=int, parse_float=float),
+        "NRGINT",
+        ScoreFunction=lambda NRGINT: NRGINT,
+        ScoreBy="Values"
+    )
+    clean_document_list = filter_incomplete_data(zipped_document_list)[0]
+    sspi_clean_api_data.insert_many(clean_document_list)
+    return parse_json(zipped_document_list)
+    
 @compute_bp.route("/COALPW")
 @login_required
 def compute_coalpw():
@@ -159,6 +179,24 @@ def compute_coalpw():
     sspi_clean_api_data.insert_many(clean_document_list)
     print(incomplete_observations)
     return parse_json(clean_document_list)
+
+@compute_bp.route("/AIRPOL")
+@login_required
+def compute_airpol():
+    if not sspi_raw_api_data.raw_data_available("AIRPOL"):
+        return redirect(url_for("api_bp.collect_bp.AIRPOL"))
+    raw_data = sspi_raw_api_data.fetch_raw_data("AIRPOL")
+    intermediate_obs_dict = extract_sdg_pivot_data_to_nested_dictionary(raw_data)
+    long_airpol = pd.DataFrame(flatten_nested_dictionary_airpol(intermediate_obs_dict))
+    zipped_document_list = zip_intermediates(
+        json.loads(str(long_airpol.to_json(orient="records")), parse_int=int, parse_float=float),
+        "AIRPOL",
+        ScoreFunction=lambda AIRPOL: AIRPOL,
+        ScoreBy="Values"
+    )
+    clean_document_list = filter_incomplete_data(zipped_document_list)[0]
+    sspi_clean_api_data.insert_many(clean_document_list)
+    return parse_json(zipped_document_list)
 
 @compute_bp.route("/ALTNRG", methods=['GET'])
 @login_required
@@ -225,49 +263,59 @@ def compute_gtrans():
     
     #######    WORLDBANK compute    #########
     worldbank_raw = sspi_raw_api_data.fetch_raw_data("GTRANS", IntermediateCode="FUELPR")
-    worldbank_clean_list = cleanedWorldBankData(worldbank_raw, "GTRANS")
+    worldbank_clean_list = cleaned_wb_current(worldbank_raw, "GTRANS", "USD per liter")
 
     #######  IEA compute ######
     iea_raw_data = sspi_raw_api_data.fetch_raw_data("GTRANS", IntermediateCode="TCO2EQ")
     series = extractAllSeries(iea_raw_data[0]["Raw"])
-    keys = iea_raw_data[0].keys()
-    raw = iea_raw_data[0]["Raw"]
-    metadata = iea_raw_data[0]["Metadata"]
-    metadata_soup = bs.BeautifulSoup(metadata, "lxml")
-    raw_soup = bs.BeautifulSoup(raw, "lxml")
+
+    ### Helpful for debugging xml parsing
+    # keys = iea_raw_data[0].keys()
+    # raw = iea_raw_data[0]["Raw"]
+    # metadata = iea_raw_data[0]["Metadata"]
+    # metadata_soup = bs.BeautifulSoup(metadata, "lxml")
+    # raw_soup = bs.BeautifulSoup(raw, "lxml")
     metadata_codes = {
         "ENER_TRANS": "1A3 - Transport"
     }
     metadata_code_map = {
-        "ENER_TRANS": "TCO2EQ"
+        "ENER_TRANS": "TCO2EM"
     }
     document_list = []
 
     for code in metadata_codes.keys():
         document_list.extend(filterSeriesListiea(series, code, "GTRANS"))
     long_iea_data = pd.DataFrame(document_list)
-    pop_data = pd.read_csv("local/UN_population_data.csv").astype(str)
-    # ### combining in pandas for UN population data to conpute correct G####
-    wb_df = pd.DataFrame(worldbank_clean_list)
-    wb_df = wb_df[wb_df["RAW"].notna()].astype(str)
 
-    wb_df = wb_df.merge(pop_data, how="left", left_on = ["YEAR","CountryName"], right_on = ["year","country"])
-    test = wb_df[wb_df["pop"] == "na"]
+    long_iea_data.drop(long_iea_data[long_iea_data["CountryCode"].map(lambda s: len(s) != 3)].index, inplace=True)
+    long_iea_data["IntermediateCode"] = long_iea_data["VariableCodeIEA"].map(lambda x: metadata_code_map[x])
+    long_iea_data = long_iea_data.astype({"Year": "int32", "Value": "float64"}).drop(columns=["Pollutant",  "IndicatorCode", "VariableCodeIEA", "Source"])
+
+    pop = json.load(open(os.path.join("local", "population.json")))
+    pop_data = pd.DataFrame(pop).astype({"Year":"int32", "Population":"float64"})
+
+    long_iea_data = long_iea_data.merge(pop_data, how="left", on = ["Year", "CountryCode"]).dropna()
+    long_iea_data['Value'] = long_iea_data['Value']/long_iea_data['Population']
+    long_iea_data = long_iea_data.drop(columns=["Population", "Country"])
+
+    # ### combining in pandas for UN population data to conpute correct G####
+    wb_df = pd.DataFrame(worldbank_clean_list).astype({"Year": "int32", "Value": "float64"}).drop(columns=["Description", "IndicatorCode"])
     
-    iea_df = long_iea_data[['Year', 'CountryCode']]
-    iea_df = iea_df[iea_df["Value"].notna()].astype(str)
+    merged = pd.concat([wb_df, long_iea_data]).dropna()
     
-    merged = wb_df.merge(iea_df, how="outer", left_on=["CountryCode", "YEAR"], right_on=["CountryCode","Year"]) 
-    # merged['RAW'] = (merged['RAW_x'].astype(float) + merged['RAW_y'].astype(float))/2
-    # df = merged.dropna()[['IndicatorCode', 'CountryCode', 'YEAR', 'RAW']]
-    # document_list = json.loads(str(df.to_json('records')))
-    # count = sspi_clean_api_data.insert_many(document_list)
-    # return f"Inserted {count} documents into SSPI Clean Database from OECD"
-    #print(series)
-    #print(len(document_list))
-    #return jsonify(document_list)
-    final_data = zip_intermediates(long_iea_data)
-    return jsonify(document_list)
+    zipped_document_list = zip_intermediates(
+        json.loads(str(merged.to_json(orient="records")), parse_int=int, parse_float=float),
+        "GTRANS",
+        ScoreFunction=lambda FUELPR, TCO2EM: 0.5*FUELPR + 0.5*TCO2EM,
+        ScoreBy="Score"
+    )
+    clean_document_list = filter_incomplete_data(zipped_document_list)[0]
+    sspi_clean_api_data.insert_many(clean_document_list)
+    return parse_json(clean_document_list)
+
+###############################################
+# Compute Routes for Pillar: MARKET STRUCTURE #
+###############################################
 
 @compute_bp.route("/SENIOR", methods=['GET'])
 @login_required
@@ -357,4 +405,3 @@ def compute_fdepth():
     sspi_clean_api_data.insert_many(filtered_list)
     print(incomplete_data)
     return parse_json(filtered_list)
-
