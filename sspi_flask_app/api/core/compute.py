@@ -5,7 +5,7 @@ from flask import Blueprint, redirect, url_for, jsonify
 from flask_login import login_required
 from ..resources.utilities import parse_json, goalpost, jsonify_df, zip_intermediates, format_m49_as_string, filter_incomplete_data, score_single_indicator
 from ... import sspi_clean_api_data, sspi_raw_api_data, sspi_analysis
-from ..datasource.sdg import flatten_nested_dictionary_biodiv, extract_sdg_pivot_data_to_nested_dictionary, flatten_nested_dictionary_redlst, flatten_nested_dictionary_intrnt, flatten_nested_dictionary_watman, flatten_nested_dictionary_stkhlm
+from ..datasource.sdg import flatten_nested_dictionary_biodiv, extract_sdg_pivot_data_to_nested_dictionary, flatten_nested_dictionary_redlst, flatten_nested_dictionary_intrnt, flatten_nested_dictionary_watman, flatten_nested_dictionary_stkhlm, flatten_nested_dictionary_airpol, flatten_nested_dictionary_nrgint
 from ..datasource.worldbank import cleanedWorldBankData, cleaned_wb_current
 from ..datasource.oecdstat import organizeOECDdata, OECD_country_list, extractAllSeries, filterSeriesList, filterSeriesListSeniors
 from ..datasource.iea import filterSeriesListiea, cleanIEAData_altnrg
@@ -112,6 +112,25 @@ def compute_skthlm():
 ### Category: ENERGY ###
 ########################
 
+@compute_bp.route("/NRGINT", methods=['GET'])
+@login_required
+def compute_nrgint():
+    if not sspi_raw_api_data.raw_data_available("NRGINT"):
+        return redirect(url_for("collect_bp.NRGINT"))
+    raw_data = sspi_raw_api_data.fetch_raw_data("NRGINT")
+    raw_data = sspi_raw_api_data.fetch_raw_data("NRGINT")
+    intermediate_obs_dict = extract_sdg_pivot_data_to_nested_dictionary(raw_data)
+    long_nrgint = pd.DataFrame(flatten_nested_dictionary_nrgint(intermediate_obs_dict))
+    zipped_document_list = zip_intermediates(
+        json.loads(str(long_nrgint.to_json(orient="records")), parse_int=int, parse_float=float),
+        "NRGINT",
+        ScoreFunction=lambda NRGINT: NRGINT,
+        ScoreBy="Values"
+    )
+    clean_document_list = filter_incomplete_data(zipped_document_list)[0]
+    sspi_clean_api_data.insert_many(clean_document_list)
+    return parse_json(zipped_document_list)
+    
 @compute_bp.route("/COALPW")
 @login_required
 def compute_coalpw():
@@ -159,6 +178,24 @@ def compute_coalpw():
     sspi_clean_api_data.insert_many(clean_document_list)
     print(incomplete_observations)
     return parse_json(clean_document_list)
+
+@compute_bp.route("/AIRPOL")
+@login_required
+def compute_airpol():
+    if not sspi_raw_api_data.raw_data_available("AIRPOL"):
+        return redirect(url_for("api_bp.collect_bp.AIRPOL"))
+    raw_data = sspi_raw_api_data.fetch_raw_data("AIRPOL")
+    intermediate_obs_dict = extract_sdg_pivot_data_to_nested_dictionary(raw_data)
+    long_airpol = pd.DataFrame(flatten_nested_dictionary_airpol(intermediate_obs_dict))
+    zipped_document_list = zip_intermediates(
+        json.loads(str(long_airpol.to_json(orient="records")), parse_int=int, parse_float=float),
+        "AIRPOL",
+        ScoreFunction=lambda AIRPOL: AIRPOL,
+        ScoreBy="Values"
+    )
+    clean_document_list = filter_incomplete_data(zipped_document_list)[0]
+    sspi_clean_api_data.insert_many(clean_document_list)
+    return parse_json(zipped_document_list)
 
 @compute_bp.route("/ALTNRG", methods=['GET'])
 @login_required
